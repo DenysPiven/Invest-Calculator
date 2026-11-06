@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd /workspace
-echo "Repo: DenysPiven/InvestCalculator"
+echo "Repo: DenysPiven/Invest-Calculator"
 echo
 if ! command -v gh >/dev/null; then
   echo "gh missing"
@@ -12,9 +12,9 @@ if ! gh auth status >/dev/null 2>&1; then
   gh auth login -h github.com -p https -w || gh auth login -h github.com -p https
 fi
 git remote remove github 2>/dev/null || true
-git remote add github https://github.com/DenysPiven/InvestCalculator.git
+git remote add github https://github.com/DenysPiven/Invest-Calculator.git
 # Prefer main; fallback create main from current HEAD
 git push -u github HEAD:main
 echo
 echo "Done. Enable Pages: Settings → Pages → Source: GitHub Actions"
-echo "Site: https://denyspiven.github.io/InvestCalculator/"
+echo "Site: https://denyspiven.github.io/Invest-Calculator/"

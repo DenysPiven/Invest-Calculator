@@ -10,7 +10,7 @@ Portfolio earnings chart in the browser:
 - Export PNG
 
 Live (GitHub Pages): after enabling Pages,  
-`https://denyspiven.github.io/InvestCalculator/`
+`https://denyspiven.github.io/Invest-Calculator/`
 
 ## Local
 
@@ -26,7 +26,7 @@ Open [http://127.0.0.1:43127](http://127.0.0.1:43127).
 1. Push to `main` or `master`.
 2. Repo **Settings → Pages → Source: GitHub Actions**.
 3. The workflow `.github/workflows/deploy-pages.yml` builds with
-   `VITE_BASE=/InvestCalculator/` and deploys `dist/`.
+   `VITE_BASE=/Invest-Calculator/` and deploys `dist/`.
 
 ## Data
 
