@@ -39,9 +39,10 @@ export type ChartData = {
   fundingEur?: number
   /**
    * Uninvested EUR cash at statement end (Cash Report “Ending Cash”).
-   * TOTAL “now” = stocks + this cash, so TOTAL earnings = NAV − deposits.
-   * Per-ticker “in” = real EUR cost of the shares (funding − cash + reinvested
-   * dividends), not the full deposits.
+   * Kept out of every series: idle cash earns nothing, so it is neither a
+   * loss nor part of “in”. Per-ticker / TOTAL “in” = real EUR cost of the
+   * shares (funding − cash + reinvested dividends). NAV − deposits still
+   * equals TOTAL earnings.
    */
   cashEur?: number
   /** Counterfactual benchmark symbol (prefer VOO when prices exist). */

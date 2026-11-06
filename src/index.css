@@ -418,7 +418,9 @@ button:disabled {
   background: var(--bg-stage);
   border: 1px solid var(--border);
   border-radius: 12px;
-  overflow: hidden;
+  /* Right-side end labels can extend past the plot → scroll sideways. */
+  overflow-x: auto;
+  overflow-y: hidden;
   box-shadow: var(--shadow);
 }
 
@@ -557,8 +559,8 @@ button:disabled {
     -webkit-overflow-scrolling: touch;
   }
 
-  .stage svg {
-    min-width: 640px;
+  .stage {
+    --stage-min-w: 640px;
   }
 
   .error-msg {
