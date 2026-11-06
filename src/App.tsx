@@ -389,7 +389,8 @@ export default function App() {
       setVisible((prev) => {
         const next: Record<string, boolean> = {}
         for (const k of seriesKeys(normalized)) {
-          next[k] = prev[k] ?? true
+          // “if all → VOO” is opt-in; everything else starts visible.
+          next[k] = prev[k] ?? k !== 'ALL_VOO'
         }
         return next
       })
