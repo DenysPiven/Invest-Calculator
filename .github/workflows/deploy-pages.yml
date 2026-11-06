@@ -43,8 +43,8 @@ jobs:
         continue-on-error: true
       - name: Build
         env:
-          # Repo is https://github.com/DenysPiven/InvestCalculator
-          VITE_BASE: /InvestCalculator/
+          # Repo is https://github.com/DenysPiven/Invest-Calculator
+          VITE_BASE: /Invest-Calculator/
         run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

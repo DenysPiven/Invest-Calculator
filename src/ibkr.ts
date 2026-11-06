@@ -626,7 +626,7 @@ async function fetchJson<T>(url: string, ms = 8000): Promise<T> {
 }
 
 export function assetUrl(path: string) {
-  // Must be a *static* `.BASE_URL` access so Vite inlines `/InvestCalculator/`
+  // Must be a *static* `.BASE_URL` access so Vite inlines `/Invest-Calculator/`
   // for GitHub Pages. Dynamic `env['BASE_URL']` breaks and 404s JSON assets.
   const base = import.meta.env.BASE_URL || '/'
   const p = path.startsWith('/') ? path.slice(1) : path

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:pages": "VITE_BASE=/InvestCalculator/ tsc -b && VITE_BASE=/InvestCalculator/ vite build",
+    "build:pages": "VITE_BASE=/Invest-Calculator/ tsc -b && VITE_BASE=/Invest-Calculator/ vite build",
     "update-prices": "python3 scripts/update_prices_cache.py --incremental",
     "update-prices:full": "python3 scripts/update_prices_cache.py --years 10",
     "lint": "oxlint",
