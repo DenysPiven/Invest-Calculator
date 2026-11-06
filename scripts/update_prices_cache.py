@@ -48,7 +48,7 @@ def download_range(
         start=start.isoformat(),
         end=end_excl.isoformat(),
         progress=False,
-        auto_adjust=True,
+        auto_adjust=False,  # raw closes: dividends are added separately (total return)
         threads=True,
     )
     if raw.empty:

@@ -5,9 +5,12 @@ on:
     branches: [main, master]
   workflow_dispatch:
   # Keep the bundled price cache fresh on Pages (browser uses cache, not Yahoo).
-  # Twice on weekdays so “Refresh to today” stays close to market closes.
+  # Every 30 min during US market hours (intraday last price for “today”),
+  # plus after the close and in the European morning.
   schedule:
-    - cron: '30 6,21 * * 1-5'
+    - cron: '*/30 13-21 * * 1-5'
+    - cron: '15 22 * * 1-5'
+    - cron: '30 6 * * 1-5'
 
 permissions:
   contents: read
@@ -35,7 +38,7 @@ jobs:
       - name: Refresh price cache (incremental)
         run: |
           pip install -q yfinance pandas
-          python3 scripts/update_prices_cache.py --incremental
+          python3 scripts/update_prices_cache.py --years 10
           python3 scripts/generate_demo_chart.py
         continue-on-error: true
       - name: Build
