@@ -228,15 +228,18 @@ function investedBySeries(data: ChartData): Record<string, number> {
     bySym[b.sym] = (bySym[b.sym] ?? 0) + b.eur
   }
   const fromBuys = Object.values(bySym).reduce((s, v) => s + v, 0)
-  // Prefer net deposits from the Activity Statement when present.
+  // New charts (cashEur set): idle cash is fully outside the math — TOTAL
+  // “in” is what actually went into shares, so cash neither shows as a loss
+  // nor dilutes the %. Legacy charts: net deposits from the statement.
   const total =
-    data.fundingEur != null && data.fundingEur > 0
-      ? data.fundingEur
-      : fromBuys
+    data.cashEur != null
+      ? fromBuys
+      : data.fundingEur != null && data.fundingEur > 0
+        ? data.fundingEur
+        : fromBuys
 
   // Legacy charts (no cashEur): per-ticker “in” was scaled to funding.
-  // New charts: per-ticker “in” = real share cost; TOTAL = deposits, and the
-  // gap is uninvested cash (TOTAL now = stocks + cash).
+  // New charts: “in” = real share cost everywhere; idle cash shown apart.
   if (
     data.cashEur == null &&
     total > 0 &&
@@ -779,11 +782,13 @@ export default function App() {
     const svg = svgRef.current
     if (!svg) return
 
+    // Full drawing width (the SVG grows to fit the right-side end labels).
+    const fullW = svg.viewBox.baseVal?.width || W
     const clone = svg.cloneNode(true) as SVGSVGElement
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-    clone.setAttribute('width', String(W))
+    clone.setAttribute('width', String(fullW))
     clone.setAttribute('height', String(H))
-    clone.setAttribute('viewBox', `0 0 ${W} ${H}`)
+    clone.setAttribute('viewBox', `0 0 ${fullW} ${H}`)
     clone.setAttribute(
       'style',
       `font-family: "IBM Plex Sans", "Segoe UI", Arial, sans-serif; background:${chartUi.bg};`,
@@ -801,7 +806,7 @@ export default function App() {
     })
 
     const canvas = document.createElement('canvas')
-    canvas.width = W * EXPORT_SCALE
+    canvas.width = fullW * EXPORT_SCALE
     canvas.height = H * EXPORT_SCALE
     const ctx = canvas.getContext('2d')!
     ctx.imageSmoothingEnabled = true
@@ -868,7 +873,7 @@ export default function App() {
             ? ` · div ${fmtEur(div)}`
             : ''
       const cash = sym === 'TOTAL' ? (data.cashEur ?? 0) : 0
-      const cashText = cash >= 0.5 ? ` · cash ${fmtEur(cash)}` : ''
+      const cashText = cash >= 0.5 ? ` · + idle cash ${fmtEur(cash)}` : ''
       const putText = incognito
         ? ''
         : put > 0
@@ -939,6 +944,23 @@ export default function App() {
     }
     return { ...best, w, h }
   })()
+
+  // Right-side end labels; the SVG widens so they are never clipped and the
+  // stage scrolls horizontally instead.
+  const endLabels = seriesOrder
+    .filter((sym) => visible[sym] !== false && data.series[sym])
+    .map((sym) => {
+      const val = data.series[sym][data.series[sym].length - 1]!
+      const pct = fmtPct(val, invested[sym] ?? 0)
+      const text = incognito
+        ? nameOf(sym)
+        : pct
+          ? `${nameOf(sym)} ${fmtEnd(val)} (${pct})`
+          : `${nameOf(sym)} ${fmtEnd(val)}`
+      return { sym, val, text }
+    })
+  const endW = endLabels.reduce((m, l) => Math.max(m, l.text.length * 7.6), 0)
+  const svgW = Math.max(W, Math.ceil(endX + endW + 16))
 
   const months: { t: number; label: string }[] = []
   {
@@ -1136,17 +1158,20 @@ export default function App() {
         <div className="stage">
           <svg
             ref={svgRef}
-            width={W}
+            width={svgW}
             height={H}
-            viewBox={`0 0 ${W} ${H}`}
+            viewBox={`0 0 ${svgW} ${H}`}
             style={{
               fontFamily: '"IBM Plex Sans", "Segoe UI", Arial, sans-serif',
+              // Plot keeps its usual size; extra label room overflows → scroll.
+              width: `${(svgW / W) * 100}%`,
+              minWidth: `calc(var(--stage-min-w, 0px) * ${svgW / W})`,
             }}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerLeave={onPointerUp}
           >
-            <rect x={0} y={0} width={W} height={H} fill={chartUi.bg} />
+            <rect x={0} y={0} width={svgW} height={H} fill={chartUi.bg} />
             <text
               x={W / 2}
               y={26}
@@ -1429,17 +1454,8 @@ export default function App() {
                 )
               })}
 
-            {seriesOrder
-              .filter((sym) => visible[sym] !== false && data.series[sym])
-              .map((sym) => {
-                const val = data.series[sym][data.series[sym].length - 1]
+            {endLabels.map(({ sym, val, text }) => {
                 const color = seriesColor(sym)
-                const pct = fmtPct(val, invested[sym] ?? 0)
-                const text = incognito
-                  ? nameOf(sym)
-                  : pct
-                    ? `${nameOf(sym)} ${fmtEnd(val)} (${pct})`
-                    : `${nameOf(sym)} ${fmtEnd(val)}`
                 return (
                   <text
                     key={`end-${sym}`}
