@@ -37,6 +37,13 @@ export type ChartData = {
    * money you put in, including broker FX vs mid-market.
    */
   fundingEur?: number
+  /**
+   * Uninvested EUR cash at statement end (Cash Report “Ending Cash”).
+   * TOTAL “now” = stocks + this cash, so TOTAL earnings = NAV − deposits.
+   * Per-ticker “in” = real EUR cost of the shares (funding − cash + reinvested
+   * dividends), not the full deposits.
+   */
+  cashEur?: number
   /** Counterfactual benchmark symbol (prefer VOO when prices exist). */
   baseline?: string
   /** Last ALL_VOO earnings − TOTAL (same cash, all in baseline). */
@@ -432,9 +439,74 @@ export function parseIbkrEndingCashEur(csvText: string): number | null {
 
     const amount = cashReportAmount(row, col)
     if (!Number.isFinite(amount)) continue
+    const isBase = row.some((c) => /^Base Currency Summary$/i.test(c))
+    if (isBase) return Math.round(amount * 100) / 100
     found = Math.round(amount * 100) / 100
   }
   return found
+}
+
+/** Rows of one statement section as header→value records. */
+function sectionRows(
+  csvText: string,
+  section: string,
+): Record<string, string>[] {
+  const text = csvText.replace(/^\uFEFF/, '')
+  const out: Record<string, string>[] = []
+  let header: string[] | null = null
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const row = parseCsvLine(line)
+    if (row[0] !== section) continue
+    if (row[1] === 'Header') {
+      header = row
+      continue
+    }
+    if (row[1] !== 'Data' || !header) continue
+    const rec: Record<string, string> = {}
+    header.forEach((h, i) => {
+      if (h && i >= 2) rec[h] = row[i] ?? ''
+    })
+    out.push(rec)
+  }
+  return out
+}
+
+/** Statement period end (`January 1, 2026 - November 5, 2026` → 2026-11-05). */
+export function parseIbkrPeriodEnd(csvText: string): string | null {
+  for (const r of sectionRows(csvText, 'Statement')) {
+    if ((r['Field Name'] ?? '').trim() !== 'Period') continue
+    const parts = (r['Field Value'] ?? '').split(/\s+-\s+/)
+    const last = parts[parts.length - 1]?.trim()
+    if (!last) return null
+    const d = new Date(`${last} 12:00:00 UTC`)
+    if (Number.isNaN(d.getTime())) return null
+    return d.toISOString().slice(0, 10)
+  }
+  return null
+}
+
+/** Statement close prices of open USD positions (Open Positions section). */
+export function parseIbkrClosePrices(csvText: string): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const r of sectionRows(csvText, 'Open Positions')) {
+    if ((r['DataDiscriminator'] ?? 'Summary') !== 'Summary') continue
+    if ((r['Currency'] ?? '').toUpperCase() !== 'USD') continue
+    const sym = (r['Symbol'] ?? '').trim().toUpperCase()
+    const px = numCell(r['Close Price'])
+    if (isEquitySymbol(sym) && px > 0) out.set(sym, px)
+  }
+  return out
+}
+
+/** EURUSD at statement end from Mark-to-Market Forex USD (EUR per USD). */
+export function parseIbkrEurUsdClose(csvText: string): number | null {
+  for (const r of sectionRows(csvText, 'Mark-to-Market Performance Summary')) {
+    if (r['Asset Category'] !== 'Forex' || r['Symbol'] !== 'USD') continue
+    const eurPerUsd = numCell(r['Current Price'])
+    if (eurPerUsd > 0) return 1 / eurPerUsd
+  }
+  return null
 }
 
 export function parseIbkrDividendCash(csvText: string): DivCash[] {
@@ -839,6 +911,19 @@ export async function buildChartFromIbkrCsv(
     }),
   )
 
+  // Statement closes are authoritative on the period-end day (matches IBKR
+  // NAV exactly) and fill the tip when the price cache lags behind.
+  const periodEnd = parseIbkrPeriodEnd(csvText)
+  if (periodEnd && periodEnd >= start && periodEnd <= end) {
+    const closes = parseIbkrClosePrices(csvText)
+    for (const [sym, map] of priceMaps) {
+      const px0 = closes.get(sym)
+      if (px0) map.set(periodEnd, px0)
+    }
+    const fx0 = parseIbkrEurUsdClose(csvText)
+    if (fx0) fxMap.set(periodEnd, fx0)
+  }
+
   const days = eachDay(start, end)
   const fx = ffill(fxMap, days)
   const px: Record<string, number[]> = {}
@@ -864,13 +949,33 @@ export async function buildChartFromIbkrCsv(
     autoInvEur += b.usd / rate
   }
 
-  // Real money in: statement deposits (full funding). Scale every ticker’s
-  // “in” so QQQ+SMH+VOO+… = TOTAL = fundingEur — includes FX conversion
-  // cost vs Yahoo/Frankfurter mid rates (trade Basis alone understates it).
+  // Real EUR spent on shares = deposits − cash still uninvested + dividends
+  // that were reinvested (USD dividends funded later buys). This includes the
+  // broker FX spread vs Frankfurter/Yahoo mid rates. Uninvested cash is NOT
+  // part of any ticker’s “in” — otherwise cash sitting in the account shows
+  // up as a loss (e.g. fresh deposits not yet invested).
   const fundingEur = parseIbkrFundingEur(csvText)
+  const endingCashEur = parseIbkrEndingCashEur(csvText)
+  let netDivEurAll = 0
+  for (const [key, usd] of divAgg) {
+    const di = days.indexOf(key.split('|')[0])
+    netDivEurAll += usd / ((di >= 0 ? fx[di] : fx[0]) || 1)
+  }
   let fundingScale = 1
-  if (fundingEur != null && fundingEur > 0 && autoInvEur > 0) {
-    fundingScale = fundingEur / autoInvEur
+  let cashEur: number | undefined
+  if (
+    fundingEur != null &&
+    fundingEur > 0 &&
+    endingCashEur != null &&
+    autoInvEur > 0
+  ) {
+    const stockCostEur = fundingEur + netDivEurAll - endingCashEur
+    const scale = stockCostEur / autoInvEur
+    // Guard against statements that don’t cover all deposits / trades.
+    if (scale > 0.95 && scale < 1.05) {
+      fundingScale = scale
+      cashEur = Math.round(endingCashEur * 100) / 100
+    }
   }
 
   const hold: Record<string, number> = Object.fromEntries(tickers.map((t) => [t, 0]))
@@ -1011,6 +1116,7 @@ export async function buildChartFromIbkrCsv(
     dividendsEur,
     fundingEur:
       fundingEur != null && fundingEur > 0 ? fundingEur : undefined,
+    cashEur,
     deltaAllVoo,
     colors,
     labels,

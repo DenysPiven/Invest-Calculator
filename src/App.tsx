@@ -10,7 +10,6 @@ import {
 import {
   assetUrl,
   buildChartFromIbkrCsv,
-  calendarTodayIso,
   CHART_COLORS_BY_THEME,
   CHART_LABELS,
   colorFor,
@@ -235,9 +234,15 @@ function investedBySeries(data: ChartData): Record<string, number> {
       ? data.fundingEur
       : fromBuys
 
-  // Keep per-ticker “in” summing exactly to TOTAL (funding), including
-  // older saved charts that still have mid-market buy euros.
-  if (total > 0 && fromBuys > 0 && Math.abs(total - fromBuys) > 0.005) {
+  // Legacy charts (no cashEur): per-ticker “in” was scaled to funding.
+  // New charts: per-ticker “in” = real share cost; TOTAL = deposits, and the
+  // gap is uninvested cash (TOTAL now = stocks + cash).
+  if (
+    data.cashEur == null &&
+    total > 0 &&
+    fromBuys > 0 &&
+    Math.abs(total - fromBuys) > 0.005
+  ) {
     const scale = total / fromBuys
     const keys = Object.keys(bySym)
     let sum = 0
@@ -573,20 +578,14 @@ export default function App() {
     }
   }, [commitStore, showPortfolio])
 
-  // One-shot: rebuild when asOf is before local today, or when an older
-  // saved chart is missing deposit-based fundingEur / ALL_VOO series.
+  // One-shot per page load: rebuild the active upload with the latest prices.
   useEffect(() => {
     if (didAutoRefresh.current || !data || busy) return
     const item = store.items.find((i) => i.id === store.activeId)
     if (!item || item.kind !== 'upload' || !item.csvText) return
-    const today = calendarTodayIso()
-    const needsToday = !item.asOf || item.asOf < today
-    const needsFunding =
-      item.chart != null &&
-      !(item.chart.fundingEur != null && item.chart.fundingEur > 0)
-    const needsAllVoo =
-      item.chart != null && !(item.chart.series?.ALL_VOO?.length > 0)
-    if (!needsToday && !needsFunding && !needsAllVoo) return
+    // Always rebuild on load: the price cache is refreshed intraday by CI,
+    // so a chart built earlier (even today) can already be stale. This also
+    // migrates older saved charts (e.g. ones without cashEur).
     didAutoRefresh.current = true
     void refreshToToday()
   }, [data, store, busy, refreshToToday])
@@ -1155,10 +1154,12 @@ export default function App() {
                     : div <= -0.5
                       ? ` · div ${fmtEur(div)}`
                       : ''
+                const cash = sym === 'TOTAL' ? (data.cashEur ?? 0) : 0
+                const cashText = cash >= 0.5 ? ` · cash ${fmtEur(cash)}` : ''
                 const putText = incognito
                   ? ''
                   : put > 0
-                    ? ` · in ${fmtEur(put)} → ${fmtEur(now)}${divText}`
+                    ? ` · in ${fmtEur(put)} → ${fmtEur(now)}${divText}${cashText}`
                     : divText
                 return (
                   <g
