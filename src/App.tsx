@@ -852,6 +852,94 @@ export default function App() {
       return { sym, pts }
     })
 
+  // Legend (“памятка”): text rows, then the plot corner it overlaps least.
+  const legendRows = seriesOrder
+    .filter((sym) => visible[sym] !== false && data.series[sym])
+    .map((sym) => {
+      const put = invested[sym] ?? 0
+      const earn = data.series[sym]?.[data.series[sym].length - 1] ?? 0
+      const now = put + earn
+      const div =
+        sym === 'ALL_VOO' ? 0 : (data.dividendsEur?.[sym] ?? 0)
+      const divText =
+        div >= 0.5
+          ? ` · div ${fmtEur(div)}`
+          : div <= -0.5
+            ? ` · div ${fmtEur(div)}`
+            : ''
+      const cash = sym === 'TOTAL' ? (data.cashEur ?? 0) : 0
+      const cashText = cash >= 0.5 ? ` · cash ${fmtEur(cash)}` : ''
+      const putText = incognito
+        ? ''
+        : put > 0
+          ? ` · in ${fmtEur(put)} → ${fmtEur(now)}${divText}${cashText}`
+          : divText
+      return { sym, putText }
+    })
+  const legendPos = (() => {
+    const longest = legendRows.reduce(
+      (m, r) => Math.max(m, (nameOf(r.sym) + r.putText).length),
+      0,
+    )
+    const w = Math.min(PLOT_W - 16, longest * 6.7 + 40)
+    const h = legendRows.length * 18 + 8
+    const pad = 6
+    const diffShown =
+      visible.TOTAL !== false &&
+      visible.ALL_VOO !== false &&
+      Boolean(data.series.ALL_VOO) &&
+      !incognito &&
+      Math.abs(delta) >= 1
+    const left = M.left + pad
+    const right = M.left + PLOT_W - w - pad
+    const top = M.top + pad
+    const bottom = M.top + PLOT_H - h - pad
+    // Preference order breaks ties: top-left first (the classic spot).
+    const corners = [
+      { x: left, y: top },
+      { x: left, y: bottom },
+      { x: right, y: diffShown ? top + 36 : top },
+      { x: right, y: bottom },
+    ]
+    const hits = (c: { x: number; y: number }) => {
+      const m = 4
+      const inBox = (x: number, y: number) =>
+        x >= c.x - m && x <= c.x + w + m && y >= c.y - m && y <= c.y + h + m
+      let score = 0
+      for (const sym of seriesOrder) {
+        if (visible[sym] === false || !data.series[sym]) continue
+        const ys = data.series[sym]
+        data.dates.forEach((d, i) => {
+          if (inBox(xScale(parseDay(d)), yScale(ys[i]!))) score += 1
+        })
+      }
+      // Buy / dividend labels count heavily — covering them is worse.
+      if (showLabels && !incognito) {
+        for (const b of [...buys, ...divLabels]) {
+          if (visible[b.sym] === false) continue
+          if (inBox(xScale(b.lx), yScale(b.ly))) score += 25
+        }
+      }
+      if (diffShown) {
+        const bx = M.left + PLOT_W - 168
+        const by = M.top + 8
+        if (c.x < bx + 156 && c.x + w > bx && c.y < by + 28 && c.y + h > by)
+          score += 1000
+      }
+      return score
+    }
+    let best = corners[0]!
+    let bestScore = Infinity
+    for (const c of corners) {
+      const sc = hits(c)
+      if (sc < bestScore) {
+        best = c
+        bestScore = sc
+      }
+    }
+    return { ...best, w, h }
+  })()
+
   const months: { t: number; label: string }[] = []
   {
     const start = new Date(data.dates[0] + 'T00:00:00')
@@ -1140,31 +1228,22 @@ export default function App() {
               />
             ))}
 
-            {seriesOrder
-              .filter((sym) => visible[sym] !== false && data.series[sym])
-              .map((sym, i) => {
-                const put = invested[sym] ?? 0
-                const earn = data.series[sym]?.[data.series[sym].length - 1] ?? 0
-                const now = put + earn
-                const div =
-                  sym === 'ALL_VOO' ? 0 : (data.dividendsEur?.[sym] ?? 0)
-                const divText =
-                  div >= 0.5
-                    ? ` · div ${fmtEur(div)}`
-                    : div <= -0.5
-                      ? ` · div ${fmtEur(div)}`
-                      : ''
-                const cash = sym === 'TOTAL' ? (data.cashEur ?? 0) : 0
-                const cashText = cash >= 0.5 ? ` · cash ${fmtEur(cash)}` : ''
-                const putText = incognito
-                  ? ''
-                  : put > 0
-                    ? ` · in ${fmtEur(put)} → ${fmtEur(now)}${divText}${cashText}`
-                    : divText
+            {legendRows.length > 0 && (
+              <rect
+                x={legendPos.x}
+                y={legendPos.y}
+                width={legendPos.w}
+                height={legendPos.h}
+                rx={6}
+                fill={chartUi.chip}
+                fillOpacity={0.82}
+              />
+            )}
+            {legendRows.map(({ sym, putText }, i) => {
                 return (
                   <g
                     key={sym}
-                    transform={`translate(${M.left + 8}, ${M.top + 14 + i * 18})`}
+                    transform={`translate(${legendPos.x + 8}, ${legendPos.y + 14 + i * 18})`}
                   >
                     <line
                       x1={0}
