@@ -41,6 +41,7 @@ type Buy = {
   id: string
   date: string
   time?: string
+  timeZone?: string
   sessionFrac?: number
   sym: string
   y: number
@@ -120,6 +121,12 @@ function parseDay(s: string) {
 }
 
 const DAY_MS = 86400000
+
+function tzLabel(zone: string) {
+  if (zone === 'America/New_York') return 'NY'
+  if (zone === 'Europe/Kyiv' || zone === 'Europe/Kiev') return 'Київ'
+  return zone.split('/').pop()!.replace(/_/g, ' ')
+}
 
 /**
  * Chart x of a buy. Daily points are closes, so a fill during the session sits
@@ -1361,7 +1368,7 @@ export default function App() {
                   >
                     {!incognito && (
                       <title>
-                        {`${b.label} · ${b.date}${b.time ? ` ${b.time} ET` : ''}`}
+                        {`${b.label} · ${b.date}${b.time ? ` ${b.time}${b.timeZone ? ` (${tzLabel(b.timeZone)})` : ''}` : ''}`}
                       </title>
                     )}
                   </circle>
