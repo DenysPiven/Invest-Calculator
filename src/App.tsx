@@ -1315,8 +1315,14 @@ export default function App() {
 
             {buys.filter((b) => visible[b.sym] !== false).map((b) => {
               const sym = b.sym
-              const px = xScale(parseDay(b.date))
-              const py = yScale(b.y)
+              // Series points are end-of-day closes; a buy happens during the
+              // day, so mark it at the start of that day (= previous close).
+              const bi = data.dates.indexOf(b.date)
+              const atStart = bi > 0 && data.series[sym]?.[bi - 1] != null
+              const px = xScale(
+                parseDay(atStart ? data.dates[bi - 1]! : b.date),
+              )
+              const py = yScale(atStart ? data.series[sym]![bi - 1]! : b.y)
               const lx = xScale(b.lx)
               const ly = yScale(b.ly)
               const color = seriesColor(sym)
