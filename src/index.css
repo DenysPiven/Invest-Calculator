@@ -577,3 +577,124 @@ button:disabled {
     flex-basis: 78vw;
   }
 }
+
+/* ---- Analytics panel ---- */
+.analytics {
+  margin-top: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.analytics-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.a-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.a-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.a-value {
+  font-size: 1.25rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.a-sub {
+  font-size: 0.75rem;
+  color: var(--text-soft);
+}
+
+.analytics .pos {
+  color: var(--accent);
+}
+
+.analytics .neg {
+  color: var(--danger);
+}
+
+.analytics-table-wrap {
+  overflow-x: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-table th,
+.analytics-table td {
+  padding: 8px 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.analytics-table th:first-child,
+.analytics-table td:first-child {
+  text-align: left;
+}
+
+.analytics-table th {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.analytics-table tbody tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.a-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.a-bar {
+  display: inline-block;
+  width: 56px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 3px;
+  background: var(--border);
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.a-bar span {
+  display: block;
+  height: 100%;
+}
+
+.analytics-notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  display: grid;
+  gap: 4px;
+}
