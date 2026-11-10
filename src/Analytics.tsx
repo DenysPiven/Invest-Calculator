@@ -169,25 +169,6 @@ export default function Analytics({
           </tbody>
         </table>
       </div>
-
-      <ul className="analytics-notes">
-        {s.largest && s.largest.weight >= 0.5 ? (
-          <li>
-            {nameOf(s.largest.sym)} is {(s.largest.weight * 100).toFixed(0)}% of
-            the portfolio — it behaves like{' '}
-            {s.effectiveHoldings.toFixed(1)} equal positions.
-          </li>
-        ) : null}
-        <li>
-          {s.buysCount} buys over {s.days} days
-          {incognito ? '' : `, avg ${eur(s.avgBuy)}`}; last one{' '}
-          {s.daysSinceLastBuy} days ago.
-        </li>
-        <li>
-          XIRR annualises short histories aggressively — read it as a trend,
-          not a forecast.
-        </li>
-      </ul>
     </section>
   )
 }
