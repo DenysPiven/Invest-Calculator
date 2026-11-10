@@ -45,7 +45,10 @@ export default function Analytics({
       {
         label: 'Total P&L',
         value: money(s.earn, signedEur),
-        sub: pct(s.returnPct),
+        sub:
+          s.deposited != null && !incognito
+            ? `${pct(s.returnPct)} · deposited ${eur(s.deposited)}`
+            : pct(s.returnPct),
         cls: tone(s.earn),
       },
       {
