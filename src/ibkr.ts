@@ -572,7 +572,6 @@ export function seriesKeys(data: ChartData): string[] {
     ? data.tickers
     : Object.keys(data.series).filter((k) => k !== 'TOTAL' && k !== 'ALL_VOO')
   const keys = [...tickers, 'TOTAL']
-  if (data.series.ALL_VOO?.length) keys.push('ALL_VOO')
   return keys
 }
 

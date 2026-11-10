@@ -29,15 +29,17 @@ export default function Analytics({
   const s = computeStats(data, invested)
   if (!s) return null
   const money = (v: number, f = eur) => (incognito ? '•••' : f(v))
+  const account = s.value + s.cash
+  const share = (v: number) => (account > 0 ? (v / account) * 100 : 0)
 
   const cards: { label: string; value: string; sub?: string; cls?: string }[] =
     [
       {
         label: 'Portfolio value',
-        value: money(s.value),
+        value: money(s.value + s.cash),
         sub:
           s.cash >= 0.5
-            ? `+ idle cash ${money(s.cash)}`
+            ? `shares ${money(s.value)} + cash ${money(s.cash)}`
             : `in ${money(s.invested)}`,
       },
       {
@@ -71,18 +73,6 @@ export default function Analytics({
         cls: s.maxDrawdown < -0.5 ? ' neg' : '',
       },
     ]
-  if (s.vsBaseline != null && Math.abs(s.vsBaseline) >= 1) {
-    cards.push({
-      label: `vs all → ${s.baseline}`,
-      value: money(-s.vsBaseline, signedEur),
-      sub:
-        s.vsBaseline > 0
-          ? `${s.baseline} alone would be ahead`
-          : 'your mix is ahead',
-      cls: tone(-s.vsBaseline),
-    })
-  }
-
   return (
     <section className="analytics" aria-label="Portfolio analytics">
       <div className="analytics-cards">
@@ -124,12 +114,12 @@ export default function Analytics({
                   <span className="a-bar" aria-hidden>
                     <span
                       style={{
-                        width: `${t.weight * 100}%`,
+                        width: `${share(t.value)}%`,
                         background: color(t.sym),
                       }}
                     />
                   </span>
-                  {(t.weight * 100).toFixed(0)}%
+                  {share(t.value).toFixed(0)}%
                 </td>
                 {!incognito && <td>{eur(t.value)}</td>}
                 {!incognito && (
@@ -147,6 +137,35 @@ export default function Analytics({
                 </td>
               </tr>
             ))}
+            {s.cash >= 0.5 ? (
+              <tr>
+                <td>
+                  <span
+                    className="a-dot"
+                    style={{ background: 'var(--text-soft)' }}
+                    aria-hidden
+                  />
+                  Cash
+                </td>
+                <td>
+                  <span className="a-bar" aria-hidden>
+                    <span
+                      style={{
+                        width: `${share(s.cash)}%`,
+                        background: 'var(--text-soft)',
+                      }}
+                    />
+                  </span>
+                  {share(s.cash).toFixed(0)}%
+                </td>
+                {!incognito && <td>{eur(s.cash)}</td>}
+                {!incognito && <td>—</td>}
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

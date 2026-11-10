@@ -202,6 +202,7 @@ export function computeStats(
     days,
     buysCount: data.buys.length,
     invested: inTotal,
+    /** Shares only; add `cash` for the full account value. */
     value: valueTotal,
     cash: data.cashEur ?? 0,
     earn: earnEnd,
