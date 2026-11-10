@@ -124,7 +124,7 @@ const DAY_MS = 86400000
 
 function tzLabel(zone: string) {
   if (zone === 'America/New_York') return 'NY'
-  if (zone === 'Europe/Kyiv' || zone === 'Europe/Kiev') return 'Київ'
+  if (zone === 'Europe/Kyiv' || zone === 'Europe/Kiev') return 'Kyiv'
   return zone.split('/').pop()!.replace(/_/g, ' ')
 }
 
