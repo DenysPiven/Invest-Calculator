@@ -1,3 +1,4 @@
+import Analytics from './Analytics'
 import {
   useCallback,
   useEffect,
@@ -1503,6 +1504,14 @@ export default function App() {
 
           </svg>
         </div>
+
+        <Analytics
+          data={data}
+          invested={invested}
+          incognito={incognito}
+          nameOf={nameOf}
+          color={seriesColor}
+        />
       </div>
     </div>
   )
