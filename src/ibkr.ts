@@ -3,8 +3,10 @@
 export type BuyPoint = {
   id: string
   date: string
-  /** Trade time from the statement (HH:MM, exchange time), when known. */
+  /** Trade time as written in the statement (HH:MM), when known. */
   time?: string
+  /** Time zone that `time` is in (detected per statement), e.g. Europe/Kyiv. */
+  timeZone?: string
   /**
    * Where in the US regular session (09:30–16:00 ET) the buy happened: 0 = open,
    * 1 = close. The marker sits between the previous close and this day's close.
@@ -127,7 +129,7 @@ export const CHART_LABELS: Record<string, string> = {
 
 type Trade = {
   date: string
-  /** HH:MM:SS from IBKR Date/Time (statement times are US Eastern). */
+  /** HH:MM:SS from IBKR Date/Time (zone depends on account settings). */
   time?: string
   sym: string
   usd: number
@@ -139,13 +141,83 @@ type Trade = {
 const SESSION_OPEN_MIN = 9 * 60 + 30
 const SESSION_CLOSE_MIN = 16 * 60
 
-/** 0 at 09:30, 1 at 16:00; pre/after-market clamps to the session edges. */
-function sessionFraction(time: string): number | undefined {
+const NY_TZ = 'America/New_York'
+
+function zoneOffsetMin(utcMs: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(utcMs)
+  const n = (t: string) => Number(parts.find((p) => p.type === t)?.value)
+  const wall = Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'), n('second'))
+  return Math.round((wall - utcMs) / 60000)
+}
+
+/** Minutes since midnight in New York for a wall-clock date+time in `zone`. */
+function nyMinutes(date: string, time: string, zone: string): number | undefined {
   const m = /^(\d{1,2}):(\d{2})/.exec(time)
   if (!m) return undefined
-  const min = Number(m[1]) * 60 + Number(m[2])
+  const hm = Number(m[1]) * 60 + Number(m[2])
+  if (zone === NY_TZ) return hm
+  try {
+    const wallUtc = Date.parse(`${date}T00:00:00Z`) + hm * 60000
+    // Two passes settle the zone offset around DST switches.
+    let utc = wallUtc - zoneOffsetMin(wallUtc, zone) * 60000
+    utc = wallUtc - zoneOffsetMin(utc, zone) * 60000
+    const ny = utc + zoneOffsetMin(utc, NY_TZ) * 60000
+    return Math.floor((ny % 86400000 + 86400000) % 86400000 / 60000)
+  } catch {
+    return undefined
+  }
+}
+
+/** 0 at 09:30 NY, 1 at 16:00 NY; pre/after-market clamps to the session edges. */
+function sessionFraction(date: string, time: string, zone: string): number | undefined {
+  const min = nyMinutes(date, time, zone)
+  if (min == null) return undefined
   const f = (min - SESSION_OPEN_MIN) / (SESSION_CLOSE_MIN - SESSION_OPEN_MIN)
   return Math.min(1, Math.max(0, f))
+}
+
+function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * IBKR writes Date/Time in the account’s configured zone (US Eastern by
+ * default, often local time for EU/UA accounts). The US session (09:30–16:00
+ * NY ≈ 16:30–23:00 Kyiv) doesn’t overlap across these zones, so pick the zone
+ * in which most fills land inside the session.
+ */
+export function detectStatementTimeZone(
+  trades: { date: string; time?: string }[],
+  candidates: string[] = [NY_TZ, browserTimeZone() ?? 'Europe/Kyiv', 'Europe/Kyiv'],
+): string {
+  const timed = trades.filter((t) => t.time)
+  let best = NY_TZ
+  let bestHits = -1
+  for (const zone of [...new Set(candidates)]) {
+    let hits = 0
+    for (const t of timed) {
+      const min = nyMinutes(t.date, t.time!, zone)
+      if (min != null && min >= SESSION_OPEN_MIN && min <= SESSION_CLOSE_MIN) hits++
+    }
+    if (hits > bestHits) {
+      best = zone
+      bestHits = hits
+    }
+  }
+  return best
 }
 type DivCash = { date: string; sym: string; usd: number }
 
@@ -914,6 +986,7 @@ export async function buildChartFromIbkrCsv(
   opts?: { endDate?: string },
 ): Promise<ChartData> {
   const trades = parseIbkrTrades(csvText)
+  const tradeZone = detectStatementTimeZone(trades)
   const tickers = [...new Set(trades.map((t) => t.sym))].sort()
   const tickerSet = new Set(tickers)
   const tradeDates = trades.map((t) => t.date).sort()
@@ -1070,7 +1143,9 @@ export async function buildChartFromIbkrCsv(
       if (b) {
         const eur = Math.round((b.usd / rate) * fundingScale * 100) / 100
         const f = b.first
-        const sessionFrac = f.time ? sessionFraction(f.time) : undefined
+        const sessionFrac = f.time
+          ? sessionFraction(d, f.time, tradeZone)
+          : undefined
         // Earnings right after the first fill: everything held so far valued at
         // that fill’s price (the market price at that moment), minus cost.
         let yBuy = y
@@ -1085,6 +1160,7 @@ export async function buildChartFromIbkrCsv(
           id: `${sym}-${d}`,
           date: d,
           time: f.time?.slice(0, 5),
+          timeZone: f.time ? tradeZone : undefined,
           sessionFrac,
           sym,
           y: yBuy,
