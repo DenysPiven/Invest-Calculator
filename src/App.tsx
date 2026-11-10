@@ -299,8 +299,11 @@ function normalizeChart(d: ChartData): ChartData {
       ? d.series.ALL_VOO[d.series.ALL_VOO.length - 1]! -
         d.series.TOTAL[d.series.TOTAL.length - 1]!
       : 0)
+  // The “if all → VOO” counterfactual is no longer shown anywhere.
+  const { ALL_VOO: _drop, ...series } = d.series
   return {
     ...d,
+    series,
     tickers,
     baseline,
     deltaAllVoo,
