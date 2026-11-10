@@ -28,6 +28,8 @@ export type PortfolioStats = {
   invested: number
   value: number
   cash: number
+  /** Net deposits from the statement, when known. */
+  deposited: number | null
   earn: number
   returnPct: number | null
   xirr: number | null
@@ -133,7 +135,10 @@ export function computeStats(
 
   const earnEnd = total[n - 1]!
   const inTotal = invested.TOTAL ?? sumBuys(data)
-  const valueTotal = inTotal + earnEnd
+  // earn = market value − in + dividends, so in + earn overstates the shares
+  // by the dividends received. Strip them to get the real market value.
+  const divTotal = dividendsEur.TOTAL ?? 0
+  const valueTotal = inTotal + earnEnd - divTotal
 
   // --- Time-weighted return (daily chain-linking, flows on buy dates) ---
   const flowByDate = new Map<string, number>()
@@ -166,7 +171,9 @@ export function computeStats(
   const drawdownNow = earnEnd - peak
 
   // --- Per-ticker ---
-  const values = tickers.map((t) => (invested[t] ?? 0) + data.series[t]![n - 1]!)
+  const values = tickers.map(
+    (t) => (invested[t] ?? 0) + data.series[t]![n - 1]! - (dividendsEur[t] ?? 0),
+  )
   const sumValues = values.reduce((s, v) => s + Math.max(v, 0), 0)
   const rows: TickerStats[] = tickers.map((sym, i) => {
     const inn = invested[sym] ?? 0
@@ -179,7 +186,7 @@ export function computeStats(
       value,
       earn,
       returnPct,
-      xirr: xirrOf(sym, value),
+      xirr: xirrOf(sym, value + (dividendsEur[sym] ?? 0)),
       dividends: dividendsEur[sym] ?? 0,
       weight: sumValues > 0 ? Math.max(value, 0) / sumValues : 0,
       contribution: Math.abs(earnEnd) >= 1 ? earn / earnEnd : null,
@@ -205,9 +212,10 @@ export function computeStats(
     /** Shares only; add `cash` for the full account value. */
     value: valueTotal,
     cash: data.cashEur ?? 0,
+    deposited: data.fundingEur ?? null,
     earn: earnEnd,
     returnPct: inTotal > 0 ? earnEnd / inTotal : null,
-    xirr: xirrOf(undefined, valueTotal),
+    xirr: xirrOf(undefined, valueTotal + divTotal),
     twr,
     maxDrawdown: maxDd,
     drawdownNow,
