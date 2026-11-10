@@ -40,6 +40,8 @@ import {
 type Buy = {
   id: string
   date: string
+  time?: string
+  sessionFrac?: number
   sym: string
   y: number
   eur: number
@@ -119,6 +121,15 @@ function parseDay(s: string) {
 
 const DAY_MS = 86400000
 
+/**
+ * Chart x of a buy. Daily points are closes, so a fill during the session sits
+ * between the previous close (day − 1) and this day's close, by trade time.
+ */
+function buyTime(b: { date: string; sessionFrac?: number }) {
+  const t = parseDay(b.date)
+  return b.sessionFrac == null ? t : t - (1 - b.sessionFrac) * DAY_MS
+}
+
 /** Short leader-line label layout with light collision avoidance. */
 function fallbackBuys(raw: ChartData['buys']): Buy[] {
   if (!raw.length) return []
@@ -158,11 +169,11 @@ function fallbackBuys(raw: ChartData['buys']): Buy[] {
 
   for (let i = 0; i < ordered.length; i++) {
     const b = ordered[i]
-    const t = parseDay(b.date)
+    const t = buyTime(b)
     // Alternate side among buys close in time so clusters don't stack one way
     const nearIdx = ordered
       .slice(0, i)
-      .filter((o) => Math.abs(parseDay(o.date) - t) < 12 * DAY_MS).length
+      .filter((o) => Math.abs(buyTime(o) - t) < 12 * DAY_MS).length
     const preferUp = nearIdx % 2 === 0
     const slots = slotsFor(t, b.y, preferUp)
     let chosen = slots[0]
@@ -849,13 +860,20 @@ export default function App() {
   const paths = seriesOrder
     .filter((sym) => visible[sym] !== false && data.series[sym])
     .map((sym) => {
-      const pts = data.dates
-        .map(
-          (d, i) =>
-            `${xScale(parseDay(d)).toFixed(1)},${yScale(data.series[sym][i]).toFixed(1)}`,
-        )
+      // Daily closes plus the intraday moment of each timed buy, so the line
+      // passes through the marker instead of jumping only at the close.
+      const pts: [number, number][] = data.dates.map((d, i) => [
+        parseDay(d),
+        data.series[sym][i],
+      ])
+      for (const b of data.buys) {
+        if (b.sym === sym && b.sessionFrac != null) pts.push([buyTime(b), b.y])
+      }
+      pts.sort((a, b) => a[0] - b[0])
+      const ptsStr = pts
+        .map(([t, v]) => `${xScale(t).toFixed(1)},${yScale(v).toFixed(1)}`)
         .join(' ')
-      return { sym, pts }
+      return { sym, pts: ptsStr }
     })
 
   // Legend (“памятка”): text rows, then the plot corner it overlaps least.
@@ -1311,7 +1329,7 @@ export default function App() {
 
             {buys.filter((b) => visible[b.sym] !== false).map((b) => {
               const sym = b.sym
-              const px = xScale(parseDay(b.date))
+              const px = xScale(buyTime(b))
               const py = yScale(b.y)
               const lx = xScale(b.lx)
               const ly = yScale(b.ly)
@@ -1340,7 +1358,13 @@ export default function App() {
                     fill={color}
                     stroke={chartUi.markerStroke}
                     strokeWidth={1}
-                  />
+                  >
+                    {!incognito && (
+                      <title>
+                        {`${b.label} · ${b.date}${b.time ? ` ${b.time} ET` : ''}`}
+                      </title>
+                    )}
+                  </circle>
                   {labelsOn && (
                     <g
                       className="label-hit"
