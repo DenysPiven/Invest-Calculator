@@ -3,6 +3,13 @@
 export type BuyPoint = {
   id: string
   date: string
+  /** Trade time from the statement (HH:MM, exchange time), when known. */
+  time?: string
+  /**
+   * Where in the US regular session (09:30–16:00 ET) the buy happened: 0 = open,
+   * 1 = close. The marker sits between the previous close and this day's close.
+   */
+  sessionFrac?: number
   sym: string
   y: number
   eur: number
@@ -118,7 +125,28 @@ export const CHART_LABELS: Record<string, string> = {
   ALL_VOO: 'if all → VOO',
 }
 
-type Trade = { date: string; sym: string; usd: number; qty: number }
+type Trade = {
+  date: string
+  /** HH:MM:SS from IBKR Date/Time (statement times are US Eastern). */
+  time?: string
+  sym: string
+  usd: number
+  qty: number
+  /** Execution price per share in USD (T. Price), when present. */
+  price?: number
+}
+
+const SESSION_OPEN_MIN = 9 * 60 + 30
+const SESSION_CLOSE_MIN = 16 * 60
+
+/** 0 at 09:30, 1 at 16:00; pre/after-market clamps to the session edges. */
+function sessionFraction(time: string): number | undefined {
+  const m = /^(\d{1,2}):(\d{2})/.exec(time)
+  if (!m) return undefined
+  const min = Number(m[1]) * 60 + Number(m[2])
+  const f = (min - SESSION_OPEN_MIN) / (SESSION_CLOSE_MIN - SESSION_OPEN_MIN)
+  return Math.min(1, Math.max(0, f))
+}
 type DivCash = { date: string; sym: string; usd: number }
 
 function numCell(v: string | undefined): number {
@@ -213,8 +241,11 @@ export function parseIbkrTrades(csvText: string): Trade[] {
     if (!isEquitySymbol(sym)) continue
 
     const dateRaw = cell(row, 'Date/Time') ?? ''
-    const date = dateRaw.split(',')[0].trim()
+    const [datePart, timePart] = dateRaw.split(',')
+    const date = (datePart ?? '').trim()
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue
+    const timeRaw = (timePart ?? '').trim()
+    const time = /^\d{1,2}:\d{2}(:\d{2})?$/.test(timeRaw) ? timeRaw : undefined
 
     const qty = numCell(cell(row, 'Quantity'))
     if (!(qty > 0)) continue
@@ -231,7 +262,10 @@ export function parseIbkrTrades(csvText: string): Trade[] {
     }
     if (!(usd > 0) || !Number.isFinite(usd)) continue
 
-    trades.push({ date, sym, usd, qty })
+    const tPrice = numCell(cell(row, 'T. Price'))
+    const price = tPrice > 0 ? tPrice : undefined
+
+    trades.push({ date, time, sym, usd, qty, price })
   }
   if (!trades.length) {
     throw new Error(
@@ -932,13 +966,19 @@ export async function buildChartFromIbkrCsv(
     px[sym] = ffill(priceMaps.get(sym)!, days)
   }
 
-  const buysAgg = new Map<string, { usd: number; qty: number }>()
+  type DayBuy = { usd: number; qty: number; first: Trade }
+  const buysAgg = new Map<string, DayBuy>()
   for (const t of trades) {
     const key = `${t.date}|${t.sym}`
-    const cur = buysAgg.get(key) ?? { usd: 0, qty: 0 }
+    const cur = buysAgg.get(key)
+    if (!cur) {
+      buysAgg.set(key, { usd: t.usd, qty: t.qty, first: t })
+      continue
+    }
     cur.usd += t.usd
     cur.qty += t.qty
-    buysAgg.set(key, cur)
+    // Marker follows the earliest fill of the day.
+    if ((t.time ?? '99') < (cur.first.time ?? '99')) cur.first = t
   }
 
   // Mid-market EUR cost of buys (Basis already includes IBKR commission).
@@ -1005,6 +1045,7 @@ export async function buildChartFromIbkrCsv(
     const rate = fx[i]
     for (const sym of tickers) {
       const prevHold = hold[sym]
+      const prevInv = inv[sym]
       const b = buysAgg.get(`${d}|${sym}`)
       if (b) {
         const eur = (b.usd / rate) * fundingScale
@@ -1018,20 +1059,35 @@ export async function buildChartFromIbkrCsv(
       }
 
       // Total return = price P&L + cumulative net dividends (cash).
-      let pricePnl = hold[sym]
+      // On a buy day this already includes the move from the fill price to
+      // the close (cost basis is the actual execution, not the open/close).
+      const pricePnl = hold[sym]
         ? (hold[sym] * px[sym][i]) / rate - inv[sym]
         : 0
-      if (prevHold === 0 && hold[sym] > 0) pricePnl = 0
       const y = Math.round((pricePnl + divEur[sym]) * 100) / 100
       series[sym].push(y)
 
       if (b) {
         const eur = Math.round((b.usd / rate) * fundingScale * 100) / 100
+        const f = b.first
+        const sessionFrac = f.time ? sessionFraction(f.time) : undefined
+        // Earnings right after the first fill: everything held so far valued at
+        // that fill’s price (the market price at that moment), minus cost.
+        let yBuy = y
+        const fillPx = f.price ?? f.usd / f.qty
+        if (sessionFrac != null && fillPx > 0) {
+          const lotEur = (f.usd / rate) * fundingScale
+          const q = prevHold + f.qty
+          const pnl = (q * fillPx) / rate - (prevInv + lotEur)
+          yBuy = Math.round((pnl + divEur[sym]) * 100) / 100
+        }
         buys.push({
           id: `${sym}-${d}`,
           date: d,
+          time: f.time?.slice(0, 5),
+          sessionFrac,
           sym,
-          y,
+          y: yBuy,
           eur,
           label: `${sym} €${Math.round(eur)}`,
         })
