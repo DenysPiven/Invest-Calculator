@@ -61,10 +61,10 @@ export default function Analytics({
         cls: tone(s.xirr),
       },
       {
-        label: 'Time-weighted',
-        value: pct(s.twr),
-        sub: 'ignores timing of deposits',
-        cls: tone(s.twr),
+        label: 'Max profit',
+        value: money(s.maxProfit, signedEur),
+        sub: `peak on ${s.maxProfitDate}`,
+        cls: tone(s.maxProfit),
       },
       {
         label: 'Max drawdown',

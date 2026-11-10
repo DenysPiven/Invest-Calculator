@@ -33,8 +33,9 @@ export type PortfolioStats = {
   earn: number
   returnPct: number | null
   xirr: number | null
-  /** Time-weighted return — unaffected by when money was added. */
-  twr: number | null
+  /** Highest TOTAL P&L ever reached, in EUR, and the day it happened. */
+  maxProfit: number
+  maxProfitDate: string
   /** Worst peak-to-trough fall of TOTAL P&L, in EUR (≤ 0). */
   maxDrawdown: number
   /** Current distance of TOTAL P&L below its peak, in EUR (≤ 0). */
@@ -140,32 +141,16 @@ export function computeStats(
   const divTotal = dividendsEur.TOTAL ?? 0
   const valueTotal = inTotal + earnEnd - divTotal
 
-  // --- Time-weighted return (daily chain-linking, flows on buy dates) ---
-  const flowByDate = new Map<string, number>()
-  for (const b of data.buys) {
-    flowByDate.set(b.date, (flowByDate.get(b.date) ?? 0) + b.eur)
-  }
-  let cumIn = 0
-  let prevValue = 0
-  let growth = 1
-  let started = false
-  for (let i = 0; i < n; i++) {
-    const flow = flowByDate.get(data.dates[i]!) ?? 0
-    cumIn += flow
-    const v = cumIn + total[i]!
-    if (started && prevValue > 0) {
-      growth *= (v - flow) / prevValue
-    }
-    if (flow > 0) started = true
-    prevValue = v
-  }
-  const twr = started && Number.isFinite(growth) ? growth - 1 : null
-
   // --- Drawdown of TOTAL P&L ---
   let peak = -Infinity
+  let peakDate = data.dates[0]!
   let maxDd = 0
-  for (const e of total) {
-    peak = Math.max(peak, e)
+  for (let i = 0; i < n; i++) {
+    const e = total[i]!
+    if (e > peak) {
+      peak = e
+      peakDate = data.dates[i]!
+    }
     maxDd = Math.min(maxDd, e - peak)
   }
   const drawdownNow = earnEnd - peak
@@ -216,7 +201,8 @@ export function computeStats(
     earn: earnEnd,
     returnPct: inTotal > 0 ? earnEnd / inTotal : null,
     xirr: xirrOf(undefined, valueTotal + divTotal),
-    twr,
+    maxProfit: peak,
+    maxProfitDate: peakDate,
     maxDrawdown: maxDd,
     drawdownNow,
     vsBaseline,
