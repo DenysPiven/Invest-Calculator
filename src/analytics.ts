@@ -38,6 +38,12 @@ export type PortfolioStats = {
   maxProfitDate: string
   /** Worst peak-to-trough fall of TOTAL P&L, in EUR (≤ 0). */
   maxDrawdown: number
+  /** Day TOTAL P&L peaked before its worst fall, and the day of the low. */
+  /** TOTAL P&L at that peak and at that low (EUR). */
+  maxDrawdownPeakValue: number
+  maxDrawdownLowValue: number
+  maxDrawdownPeakDate: string
+  maxDrawdownLowDate: string
   /** Current distance of TOTAL P&L below its peak, in EUR (≤ 0). */
   drawdownNow: number
   /** Last ALL_VOO − TOTAL, if the benchmark exists. */
@@ -56,6 +62,32 @@ const MIN_XIRR_DAYS = 60
 
 function dayMs(iso: string) {
   return new Date(`${iso}T00:00:00Z`).getTime()
+}
+
+/**
+ * Worst peak-to-trough fall of a P&L series. `peakIdx` / `peak` are the
+ * all-time high (for “max profit”); `maxPeakIdx` is the high the worst fall
+ * started from.
+ */
+export function maxDrawdownOf(series: number[]) {
+  let peak = -Infinity
+  let peakIdx = 0
+  let depth = 0
+  let maxPeakIdx = 0
+  let troughIdx = 0
+  for (let i = 0; i < series.length; i++) {
+    const e = series[i]!
+    if (e > peak) {
+      peak = e
+      peakIdx = i
+    }
+    if (e - peak < depth) {
+      depth = e - peak
+      maxPeakIdx = peakIdx
+      troughIdx = i
+    }
+  }
+  return { depth, peak, peakIdx, maxPeakIdx, troughIdx }
 }
 
 /** Annualised IRR for dated flows (negative = money in, last = value out). */
@@ -142,18 +174,10 @@ export function computeStats(
   const valueTotal = inTotal + earnEnd - divTotal
 
   // --- Drawdown of TOTAL P&L ---
-  let peak = -Infinity
-  let peakDate = data.dates[0]!
-  let maxDd = 0
-  for (let i = 0; i < n; i++) {
-    const e = total[i]!
-    if (e > peak) {
-      peak = e
-      peakDate = data.dates[i]!
-    }
-    maxDd = Math.min(maxDd, e - peak)
-  }
-  const drawdownNow = earnEnd - peak
+  const dd = maxDrawdownOf(total)
+  const maxDd = dd.depth
+  const drawdownNow = earnEnd - dd.peak
+  const peakDate = data.dates[dd.peakIdx]!
 
   // --- Per-ticker ---
   const values = tickers.map(
@@ -201,9 +225,13 @@ export function computeStats(
     earn: earnEnd,
     returnPct: inTotal > 0 ? earnEnd / inTotal : null,
     xirr: xirrOf(undefined, valueTotal + divTotal),
-    maxProfit: peak,
+    maxProfit: dd.peak,
     maxProfitDate: peakDate,
     maxDrawdown: maxDd,
+    maxDrawdownPeakValue: total[dd.maxPeakIdx]!,
+    maxDrawdownLowValue: total[dd.troughIdx]!,
+    maxDrawdownPeakDate: data.dates[dd.maxPeakIdx]!,
+    maxDrawdownLowDate: data.dates[dd.troughIdx]!,
     drawdownNow,
     vsBaseline,
     baseline,
