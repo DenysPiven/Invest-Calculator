@@ -67,16 +67,13 @@ export default function Analytics({
         cls: tone(s.maxProfit),
       },
       {
-        label: 'Max drawdown',
-        value: money(s.maxDrawdown),
+        label: 'Max loss',
+        value: s.minProfit < -0.5 ? money(s.minProfit) : '—',
         sub:
-          s.maxDrawdown < -0.5
-            ? `from ${money(s.maxDrawdownPeakValue, signedEur)} (${s.maxDrawdownPeakDate}) to ${money(s.maxDrawdownLowValue, signedEur)} (${s.maxDrawdownLowDate})` +
-              (s.drawdownNow < -0.5
-                ? ` · now ${money(s.drawdownNow)} below peak`
-                : ' · recovered')
-            : 'at its peak now',
-        cls: s.maxDrawdown < -0.5 ? ' neg' : '',
+          s.minProfit < -0.5
+            ? `lowest P&L, on ${s.minProfitDate}`
+            : 'never below zero',
+        cls: s.minProfit < -0.5 ? ' neg' : '',
       },
     ]
   return (
