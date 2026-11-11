@@ -1,5 +1,5 @@
 import Analytics from './Analytics'
-import { truncateChart } from './analytics'
+import { maxDrawdownOf, truncateChart } from './analytics'
 import {
   useCallback,
   useEffect,
@@ -1565,6 +1565,43 @@ export default function App() {
                       {label}
                     </text>
                   </g>
+                </g>
+              )
+            })()}
+
+            {(() => {
+              // Mark the worst peak → low fall of TOTAL on the chart.
+              const ser = view.series.TOTAL
+              if (!ser || visible.TOTAL === false) return null
+              const dd = maxDrawdownOf(ser)
+              if (dd.depth > -0.5) return null
+              const px = xScale(parseDay(data.dates[dd.maxPeakIdx]!))
+              const py = yScale(ser[dd.maxPeakIdx]!)
+              const lx = xScale(parseDay(data.dates[dd.troughIdx]!))
+              const ly = yScale(ser[dd.troughIdx]!)
+              const c = theme === 'dark' ? '#f87171' : '#dc2626'
+              const text = incognito ? 'max drawdown' : `max drawdown ${fmtEnd(dd.depth)} (low ${fmtEnd(ser[dd.troughIdx]!)})`
+              const tw = text.length * 6.2 + 12
+              const tx = Math.max(M.left, Math.min(M.left + PLOT_W - tw, lx - tw / 2))
+              return (
+                <g style={{ pointerEvents: 'none' }}>
+                  <line
+                    x1={px}
+                    y1={py}
+                    x2={lx}
+                    y2={ly}
+                    stroke={c}
+                    strokeWidth={1.4}
+                    strokeDasharray="4 3"
+                  />
+                  <line x1={px} y1={py} x2={px} y2={ly} stroke={c} strokeWidth={0.8} strokeDasharray="2 3" opacity={0.7} />
+                  <line x1={px} y1={ly} x2={lx} y2={ly} stroke={c} strokeWidth={0.8} strokeDasharray="2 3" opacity={0.7} />
+                  <circle cx={px} cy={py} r={4} fill={c} stroke={chartUi.markerStroke} strokeWidth={1} />
+                  <circle cx={lx} cy={ly} r={4.5} fill={c} stroke={chartUi.markerStroke} strokeWidth={1} />
+                  <rect x={tx} y={ly + 8} width={tw} height={16} rx={4} fill={chartUi.chip} stroke={c} strokeWidth={0.9} />
+                  <text x={tx + tw / 2} y={ly + 19.5} textAnchor="middle" fontSize={10.5} fontWeight={700} fill={c}>
+                    {text}
+                  </text>
                 </g>
               )
             })()}

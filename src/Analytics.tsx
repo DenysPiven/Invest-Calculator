@@ -70,8 +70,11 @@ export default function Analytics({
         label: 'Max drawdown',
         value: money(s.maxDrawdown),
         sub:
-          s.drawdownNow < -0.5
-            ? `now ${money(s.drawdownNow)} below peak`
+          s.maxDrawdown < -0.5
+            ? `from ${money(s.maxDrawdownPeakValue, signedEur)} (${s.maxDrawdownPeakDate}) to ${money(s.maxDrawdownLowValue, signedEur)} (${s.maxDrawdownLowDate})` +
+              (s.drawdownNow < -0.5
+                ? ` · now ${money(s.drawdownNow)} below peak`
+                : ' · recovered')
             : 'at its peak now',
         cls: s.maxDrawdown < -0.5 ? ' neg' : '',
       },
