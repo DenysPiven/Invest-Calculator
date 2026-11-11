@@ -36,16 +36,9 @@ export type PortfolioStats = {
   /** Highest TOTAL P&L ever reached, in EUR, and the day it happened. */
   maxProfit: number
   maxProfitDate: string
-  /** Worst peak-to-trough fall of TOTAL P&L, in EUR (≤ 0). */
-  maxDrawdown: number
-  /** Day TOTAL P&L peaked before its worst fall, and the day of the low. */
-  /** TOTAL P&L at that peak and at that low (EUR). */
-  maxDrawdownPeakValue: number
-  maxDrawdownLowValue: number
-  maxDrawdownPeakDate: string
-  maxDrawdownLowDate: string
-  /** Current distance of TOTAL P&L below its peak, in EUR (≤ 0). */
-  drawdownNow: number
+  /** Lowest TOTAL P&L ever reached (≤ 0 when it was ever under water), and its day. */
+  minProfit: number
+  minProfitDate: string
   /** Last ALL_VOO − TOTAL, if the benchmark exists. */
   vsBaseline: number | null
   baseline: string
@@ -62,32 +55,6 @@ const MIN_XIRR_DAYS = 60
 
 function dayMs(iso: string) {
   return new Date(`${iso}T00:00:00Z`).getTime()
-}
-
-/**
- * Worst peak-to-trough fall of a P&L series. `peakIdx` / `peak` are the
- * all-time high (for “max profit”); `maxPeakIdx` is the high the worst fall
- * started from.
- */
-export function maxDrawdownOf(series: number[]) {
-  let peak = -Infinity
-  let peakIdx = 0
-  let depth = 0
-  let maxPeakIdx = 0
-  let troughIdx = 0
-  for (let i = 0; i < series.length; i++) {
-    const e = series[i]!
-    if (e > peak) {
-      peak = e
-      peakIdx = i
-    }
-    if (e - peak < depth) {
-      depth = e - peak
-      maxPeakIdx = peakIdx
-      troughIdx = i
-    }
-  }
-  return { depth, peak, peakIdx, maxPeakIdx, troughIdx }
 }
 
 /** Annualised IRR for dated flows (negative = money in, last = value out). */
@@ -173,11 +140,13 @@ export function computeStats(
   const divTotal = dividendsEur.TOTAL ?? 0
   const valueTotal = inTotal + earnEnd - divTotal
 
-  // --- Drawdown of TOTAL P&L ---
-  const dd = maxDrawdownOf(total)
-  const maxDd = dd.depth
-  const drawdownNow = earnEnd - dd.peak
-  const peakDate = data.dates[dd.peakIdx]!
+  // --- Best / worst TOTAL P&L reached ---
+  let maxIdx = 0
+  let minIdx = 0
+  for (let i = 1; i < n; i++) {
+    if (total[i]! > total[maxIdx]!) maxIdx = i
+    if (total[i]! < total[minIdx]!) minIdx = i
+  }
 
   // --- Per-ticker ---
   const values = tickers.map(
@@ -225,14 +194,10 @@ export function computeStats(
     earn: earnEnd,
     returnPct: inTotal > 0 ? earnEnd / inTotal : null,
     xirr: xirrOf(undefined, valueTotal + divTotal),
-    maxProfit: dd.peak,
-    maxProfitDate: peakDate,
-    maxDrawdown: maxDd,
-    maxDrawdownPeakValue: total[dd.maxPeakIdx]!,
-    maxDrawdownLowValue: total[dd.troughIdx]!,
-    maxDrawdownPeakDate: data.dates[dd.maxPeakIdx]!,
-    maxDrawdownLowDate: data.dates[dd.troughIdx]!,
-    drawdownNow,
+    maxProfit: total[maxIdx]!,
+    maxProfitDate: data.dates[maxIdx]!,
+    minProfit: total[minIdx]!,
+    minProfitDate: data.dates[minIdx]!,
     vsBaseline,
     baseline,
     effectiveHoldings: hhi > 0 ? 1 / hhi : 0,
