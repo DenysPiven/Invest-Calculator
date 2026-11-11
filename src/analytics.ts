@@ -214,3 +214,40 @@ export function computeStats(
     tickers: rows,
   }
 }
+
+/**
+ * The chart as it stood on `dates[idx]`: later days, buys and dividends are
+ * dropped. Idle cash and net deposits aren’t tracked per day, so they are
+ * omitted for past dates (“in” is then purely the cost of shares bought).
+ */
+export function truncateChart(data: ChartData, idx: number): ChartData {
+  const n = data.dates.length
+  if (idx >= n - 1) return data
+  const cut = data.dates[Math.max(idx, 0)]!
+  const series: Record<string, number[]> = {}
+  for (const [k, v] of Object.entries(data.series)) series[k] = v.slice(0, idx + 1)
+  const divs = (data.divs ?? []).filter((d) => d.date <= cut)
+  const dividendsEur: Record<string, number> = {}
+  let divTotal = 0
+  for (const t of data.tickers) {
+    const later = (data.divs ?? [])
+      .filter((d) => d.sym === t && d.date > cut)
+      .reduce((s, d) => s + d.eur, 0)
+    const v = Math.round(((data.dividendsEur?.[t] ?? 0) - later) * 100) / 100
+    dividendsEur[t] = v
+    divTotal += v
+  }
+  dividendsEur.TOTAL = Math.round(divTotal * 100) / 100
+  return {
+    ...data,
+    asOf: cut,
+    dates: data.dates.slice(0, idx + 1),
+    series,
+    buys: data.buys.filter((b) => b.date <= cut),
+    divs,
+    dividendsEur,
+    fundingEur: undefined,
+    cashEur: 0,
+    deltaAllVoo: undefined,
+  }
+}
