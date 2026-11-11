@@ -891,7 +891,14 @@ export default function App() {
             `${xScale(parseDay(d)).toFixed(1)},${yScale(data.series[sym][i]).toFixed(1)}`,
         )
         .join(' ')
-      return { sym, pts, live }
+      const future = data.dates
+        .slice(ci)
+        .map(
+          (d, i) =>
+            `${xScale(parseDay(d)).toFixed(1)},${yScale(data.series[sym][ci + i]).toFixed(1)}`,
+        )
+        .join(' ')
+      return { sym, pts, live, future }
     })
 
   // Legend (“памятка”): text rows, then the plot corner it overlaps least.
@@ -1291,6 +1298,20 @@ export default function App() {
                 cursorFromClient(e.clientX)
               }}
             />
+
+            {rewound &&
+              paths.map(({ sym, future }) => (
+                <polyline
+                  key={`future-${sym}`}
+                  fill="none"
+                  points={future}
+                  stroke={seriesColor(sym)}
+                  strokeWidth={1.4}
+                  strokeDasharray="4 4"
+                  opacity={0.45}
+                  style={{ pointerEvents: 'none' }}
+                />
+              ))}
 
             {paths.map(({ sym, pts, live }) => (
               <polyline
