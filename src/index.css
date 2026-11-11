@@ -698,3 +698,24 @@ button:disabled {
   display: grid;
   gap: 4px;
 }
+
+/* ---- Time-machine scrubber ---- */
+.scrubber {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.scrubber input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.scrubber-date {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

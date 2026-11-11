@@ -1,4 +1,5 @@
 import Analytics from './Analytics'
+import { truncateChart } from './analytics'
 import {
   useCallback,
   useEffect,
@@ -324,6 +325,9 @@ export default function App() {
   const [incognito, setIncognito] = useState(false)
   const [theme, setTheme] = useState<UiTheme>(() => readStoredTheme())
   const [saveFlash, setSaveFlash] = useState(false)
+  /** Time-machine cursor: index into data.dates; null = today. */
+  const [cursor, setCursor] = useState<number | null>(null)
+  const scrubRef = useRef(false)
   const saveFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [store, setStore] = useState<PortfolioStore>(() => loadStore())
   const [visible, setVisible] = useState<Record<string, boolean>>({})
@@ -390,6 +394,7 @@ export default function App() {
     (chart: ChartData, positions: PosMap | null) => {
       const normalized = normalizeChart(chart)
       setData(normalized)
+      setCursor(null)
       setVisible((prev) => {
         const next: Record<string, boolean> = {}
         for (const k of seriesKeys(normalized)) {
@@ -691,7 +696,20 @@ export default function App() {
     setActiveLabel(id)
   }
 
+  const cursorFromClient = (clientX: number) => {
+    if (!scales || !data) return
+    const x = clientToSvg(clientX, 0).x
+    const t = scales.xMin + ((x - M.left) / PLOT_W) * (scales.xMax - scales.xMin)
+    const last = data.dates.length - 1
+    const idx = Math.round((t - scales.xs[0]!) / DAY_MS)
+    setCursor(Math.max(0, Math.min(last, idx)))
+  }
+
   const onPointerMove = (e: ReactPointerEvent) => {
+    if (scrubRef.current) {
+      cursorFromClient(e.clientX)
+      return
+    }
     const drag = dragRef.current
     if (!drag || !scales) return
     const p = clientToSvg(e.clientX, e.clientY)
@@ -745,6 +763,7 @@ export default function App() {
   )
 
   const onPointerUp = () => {
+    scrubRef.current = false
     const wasDragging = !!dragRef.current
     dragRef.current = null
     setActiveLabel(null)
@@ -842,7 +861,13 @@ export default function App() {
   const endX = M.left + PLOT_W + 8
   const nameOf = (sym: string) =>
     data.labels?.[sym] ?? DEFAULT_LABELS[sym] ?? sym
-  const invested = investedBySeries(data)
+  const lastIdx = data.dates.length - 1
+  const ci = cursor == null ? lastIdx : Math.max(0, Math.min(cursor, lastIdx))
+  const rewound = ci < lastIdx
+  const cursorDate = data.dates[ci]!
+  /** Everything below the chart reflects the chart as of the cursor day. */
+  const view = rewound ? truncateChart(data, ci) : data
+  const invested = investedBySeries(view)
   const delta =
     data.deltaAllVoo ??
     (data.series.ALL_VOO
@@ -859,25 +884,32 @@ export default function App() {
             `${xScale(parseDay(d)).toFixed(1)},${yScale(data.series[sym][i]).toFixed(1)}`,
         )
         .join(' ')
-      return { sym, pts }
+      const live = data.dates
+        .slice(0, ci + 1)
+        .map(
+          (d, i) =>
+            `${xScale(parseDay(d)).toFixed(1)},${yScale(data.series[sym][i]).toFixed(1)}`,
+        )
+        .join(' ')
+      return { sym, pts, live }
     })
 
   // Legend (“памятка”): text rows, then the plot corner it overlaps least.
   const legendRows = seriesOrder
-    .filter((sym) => visible[sym] !== false && data.series[sym])
+    .filter((sym) => visible[sym] !== false && view.series[sym])
     .map((sym) => {
       const put = invested[sym] ?? 0
-      const earn = data.series[sym]?.[data.series[sym].length - 1] ?? 0
+      const earn = view.series[sym]?.[view.series[sym].length - 1] ?? 0
       const now = put + earn
       const div =
-        sym === 'ALL_VOO' ? 0 : (data.dividendsEur?.[sym] ?? 0)
+        sym === 'ALL_VOO' ? 0 : (view.dividendsEur?.[sym] ?? 0)
       const divText =
         div >= 0.5
           ? ` · div ${fmtEur(div)}`
           : div <= -0.5
             ? ` · div ${fmtEur(div)}`
             : ''
-      const cash = sym === 'TOTAL' ? (data.cashEur ?? 0) : 0
+      const cash = sym === 'TOTAL' ? (view.cashEur ?? 0) : 0
       const cashText = cash >= 0.5 ? ` · + idle cash ${fmtEur(cash)}` : ''
       const putText = incognito
         ? ''
@@ -955,7 +987,7 @@ export default function App() {
   const endLabels = seriesOrder
     .filter((sym) => visible[sym] !== false && data.series[sym])
     .map((sym) => {
-      const val = data.series[sym][data.series[sym].length - 1]!
+      const val = view.series[sym][view.series[sym].length - 1]!
       const pct = fmtPct(val, invested[sym] ?? 0)
       const text = incognito
         ? nameOf(sym)
@@ -1245,11 +1277,26 @@ export default function App() {
               strokeDasharray="4 3"
             />
 
-            {paths.map(({ sym, pts }) => (
+            {/* Press / drag anywhere on the plot to move the time cursor. */}
+            <rect
+              x={M.left}
+              y={M.top}
+              width={PLOT_W}
+              height={PLOT_H}
+              fill="transparent"
+              style={{ cursor: 'ew-resize', touchAction: 'pan-y' }}
+              onPointerDown={(e) => {
+                ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                scrubRef.current = true
+                cursorFromClient(e.clientX)
+              }}
+            />
+
+            {paths.map(({ sym, pts, live }) => (
               <polyline
                 key={sym}
                 fill="none"
-                points={pts}
+                points={rewound ? live : pts}
                 stroke={seriesColor(sym)}
                 strokeWidth={
                   sym === 'TOTAL' || sym === 'ALL_VOO' ? 2.4 : 1.8
@@ -1313,7 +1360,7 @@ export default function App() {
               </text>
             )}
 
-            {buys.filter((b) => visible[b.sym] !== false).map((b) => {
+            {buys.filter((b) => visible[b.sym] !== false && b.date <= cursorDate).map((b) => {
               const sym = b.sym
               // Series points are end-of-day closes; a buy happens during the
               // day, so mark it at the start of that day (= previous close).
@@ -1392,7 +1439,7 @@ export default function App() {
             })}
 
             {divLabels
-              .filter((d) => visible[d.sym] !== false)
+              .filter((d) => visible[d.sym] !== false && d.date <= cursorDate)
               .map((d) => {
                 const color = seriesColor(d.sym)
                 const cx = xScale(parseDay(d.date))
@@ -1465,6 +1512,63 @@ export default function App() {
                 )
               })}
 
+            {(() => {
+              const cx = xScale(parseDay(cursorDate))
+              const label = cursorDate
+              const tw = label.length * 6.6 + 16
+              const tx = Math.max(
+                M.left + tw / 2,
+                Math.min(M.left + PLOT_W - tw / 2, cx),
+              )
+              return (
+                <g style={{ pointerEvents: 'none' }}>
+                  <line
+                    x1={cx}
+                    x2={cx}
+                    y1={M.top}
+                    y2={M.top + PLOT_H}
+                    stroke={chartUi.fg}
+                    strokeWidth={1.2}
+                    strokeDasharray={rewound ? undefined : '3 3'}
+                    opacity={rewound ? 0.85 : 0.35}
+                  />
+                  {seriesOrder
+                    .filter((sym) => visible[sym] !== false && data.series[sym])
+                    .map((sym) => (
+                      <circle
+                        key={`cur-${sym}`}
+                        cx={cx}
+                        cy={yScale(data.series[sym][ci]!)}
+                        r={4}
+                        fill={seriesColor(sym)}
+                        stroke={chartUi.markerStroke}
+                        strokeWidth={1.2}
+                      />
+                    ))}
+                  <g transform={`translate(${tx - tw / 2}, ${M.top - 20})`}>
+                    <rect
+                      width={tw}
+                      height={18}
+                      rx={9}
+                      fill={chartUi.chip}
+                      stroke={chartUi.fg}
+                      strokeWidth={rewound ? 1.2 : 0.6}
+                    />
+                    <text
+                      x={tw / 2}
+                      y={13}
+                      textAnchor="middle"
+                      fontSize={11}
+                      fontWeight={700}
+                      fill={chartUi.fg}
+                    >
+                      {label}
+                    </text>
+                  </g>
+                </g>
+              )
+            })()}
+
             {endLabels.map(({ sym, val, text }) => {
                 const color = seriesColor(sym)
                 return (
@@ -1514,8 +1618,30 @@ export default function App() {
           </svg>
         </div>
 
+        <div className="scrubber">
+          <input
+            type="range"
+            min={0}
+            max={lastIdx}
+            step={1}
+            value={ci}
+            aria-label="Rewind time"
+            onChange={(e) => setCursor(Number(e.target.value))}
+          />
+          <span className="scrubber-date">
+            {rewound ? `As of ${cursorDate}` : `Today · ${cursorDate}`}
+          </span>
+          <button
+            type="button"
+            disabled={!rewound}
+            onClick={() => setCursor(null)}
+          >
+            Now
+          </button>
+        </div>
+
         <Analytics
-          data={data}
+          data={view}
           invested={invested}
           incognito={incognito}
           nameOf={nameOf}
