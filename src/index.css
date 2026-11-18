@@ -418,9 +418,8 @@ button:disabled {
   background: var(--bg-stage);
   border: 1px solid var(--border);
   border-radius: 12px;
-  /* Right-side end labels can extend past the plot → scroll sideways. */
-  overflow-x: auto;
-  overflow-y: hidden;
+  /* Chart always fits; zoom / pan happen inside the plot. */
+  overflow: hidden;
   box-shadow: var(--shadow);
 }
 
@@ -555,12 +554,6 @@ button:disabled {
 
   .stage {
     border-radius: 10px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .stage {
-    --stage-min-w: 640px;
   }
 
   .error-msg {
@@ -718,4 +711,52 @@ button:disabled {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* ---- Zoom / pan ---- */
+.zoombar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.panbar {
+  position: relative;
+  flex: 1;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.panbar[hidden] {
+  display: block;
+  visibility: hidden;
+}
+
+.panbar-thumb {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  min-width: 18px;
+  border-radius: 5px;
+  background: var(--border-strong);
+  cursor: grab;
+}
+
+.panbar-thumb:active {
+  cursor: grabbing;
+  background: var(--text-soft);
+}
+
+.zoom-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.zoom-buttons button {
+  min-width: 36px;
 }

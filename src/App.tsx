@@ -327,7 +327,15 @@ export default function App() {
   const [saveFlash, setSaveFlash] = useState(false)
   /** Time-machine cursor: index into data.dates; null = today. */
   const [cursor, setCursor] = useState<number | null>(null)
-  const scrubRef = useRef(false)
+  /** Zoomed time window (ms); null = whole history. */
+  const [win, setWin] = useState<{ start: number; end: number } | null>(null)
+  const pointersRef = useRef(new Map<number, number>())
+  const panRef = useRef<
+    | { kind: 'pan'; x0: number; start: number; end: number }
+    | { kind: 'pinch'; d0: number; mid: number; start: number; end: number }
+    | null
+  >(null)
+  const wheelRef = useRef<((e: WheelEvent) => void) | null>(null)
   const saveFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [store, setStore] = useState<PortfolioStore>(() => loadStore())
   const [visible, setVisible] = useState<Record<string, boolean>>({})
@@ -395,6 +403,7 @@ export default function App() {
       const normalized = normalizeChart(chart)
       setData(normalized)
       setCursor(null)
+      setWin(null)
       setVisible((prev) => {
         const next: Record<string, boolean> = {}
         for (const k of seriesKeys(normalized)) {
@@ -644,27 +653,51 @@ export default function App() {
     // Pad time axis from data span (auto: a few days before / after)
     const span = Math.max(xs[xs.length - 1] - xs[0], 7 * 86400000)
     const pad = Math.min(Math.max(span * 0.04, 2 * 86400000), 21 * 86400000)
-    const xMin = xs[0] - pad
-    const xMax = xs[xs.length - 1] + pad * 2.2
+    const fullMin = xs[0] - pad
+    const fullMax = xs[xs.length - 1] + pad * 2.2
+    const xMin = win?.start ?? fullMin
+    const xMax = win?.end ?? fullMax
+    const inWin = (t: number) => t >= xMin && t <= xMax
     const endYs = keys
       .filter((s) => data.series[s]?.length)
       .map((s) => data.series[s][data.series[s].length - 1])
-    const allY = [
-      ...Object.values(data.series).flat(),
-      ...buys.map((b) => b.ly),
-      ...divLabels.map((d) => d.ly),
-      ...endYs,
-      0,
-    ]
+    // Zoomed: fit the € axis to what is actually on screen.
+    const allY = win
+      ? [
+          ...Object.values(data.series).flatMap((ser) =>
+            ser.filter((_, i) => inWin(xs[i]!)),
+          ),
+          ...buys.filter((b) => inWin(b.lx)).map((b) => b.ly),
+          ...divLabels.filter((d) => inWin(d.lx)).map((d) => d.ly),
+          0,
+        ]
+      : [
+          ...Object.values(data.series).flat(),
+          ...buys.map((b) => b.ly),
+          ...divLabels.map((d) => d.ly),
+          ...endYs,
+          0,
+        ]
     const rawMin = Math.min(...allY)
     const rawMax = Math.max(...allY)
-    const padY = Math.max((rawMax - rawMin) * 0.12, 40)
+    const padY = Math.max((rawMax - rawMin) * 0.12, win ? 10 : 40)
     const yMin = rawMin - padY
     const yMax = rawMax + padY
     const xScale = (t: number) => M.left + ((t - xMin) / (xMax - xMin)) * PLOT_W
     const yScale = (v: number) => M.top + ((yMax - v) / (yMax - yMin)) * PLOT_H
-    return { xs, xMin, xMax, yMin, yMax, xScale, yScale, keys }
-  }, [data, buys, divLabels])
+    return {
+      xs,
+      xMin,
+      xMax,
+      fullMin,
+      fullMax,
+      yMin,
+      yMax,
+      xScale,
+      yScale,
+      keys,
+    }
+  }, [data, buys, divLabels, win])
 
   const clientToSvg = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current
@@ -696,18 +729,133 @@ export default function App() {
     setActiveLabel(id)
   }
 
-  const cursorFromClient = (clientX: number) => {
-    if (!scales || !data) return
-    const x = clientToSvg(clientX, 0).x
-    const t = scales.xMin + ((x - M.left) / PLOT_W) * (scales.xMax - scales.xMin)
-    const last = data.dates.length - 1
-    const idx = Math.round((t - scales.xs[0]!) / DAY_MS)
-    setCursor(Math.max(0, Math.min(last, idx)))
+  const MIN_SPAN = 7 * DAY_MS
+
+  /** Set the zoom window, clamped to the data; full width resets to null. */
+  const setWindow = (start: number, end: number) => {
+    if (!scales) return
+    const { fullMin, fullMax } = scales
+    const full = fullMax - fullMin
+    const span = Math.min(Math.max(end - start, MIN_SPAN), full)
+    if (span >= full * 0.999) {
+      setWin(null)
+      return
+    }
+    const mid = (start + end) / 2
+    let s0 = mid - span / 2
+    s0 = Math.max(fullMin, Math.min(fullMax - span, s0))
+    setWin({ start: s0, end: s0 + span })
   }
 
+  const timeAtClient = (clientX: number) => {
+    if (!scales) return 0
+    const x = clientToSvg(clientX, 0).x
+    return scales.xMin + ((x - M.left) / PLOT_W) * (scales.xMax - scales.xMin)
+  }
+
+  /** factor < 1 zooms in, keeping time `t` under the same screen spot. */
+  const zoomAt = (factor: number, t?: number) => {
+    if (!scales) return
+    const { xMin, xMax } = scales
+    const at = t ?? (xMin + xMax) / 2
+    let ns = at - (at - xMin) * factor
+    let ne = at + (xMax - at) * factor
+    const span = Math.max(ne - ns, MIN_SPAN)
+    if (span !== ne - ns) {
+      const k = (at - xMin) / (xMax - xMin)
+      ns = at - span * k
+      ne = ns + span
+    }
+    if (!scales) return
+    const full = scales.fullMax - scales.fullMin
+    if (ne - ns >= full * 0.999) {
+      setWin(null)
+      return
+    }
+    ns = Math.max(scales.fullMin, Math.min(scales.fullMax - (ne - ns), ns))
+    setWin({ start: ns, end: ns + (ne - ns) })
+  }
+
+  const panBy = (dt: number) => {
+    if (!scales || !win) return
+    setWindow(scales.xMin + dt, scales.xMax + dt)
+  }
+
+  const onPlotPointerDown = (e: ReactPointerEvent) => {
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    pointersRef.current.set(e.pointerId, e.clientX)
+    if (!scales) return
+    const pts = [...pointersRef.current.values()]
+    if (pts.length >= 2) {
+      const [a, b] = pts as [number, number]
+      panRef.current = {
+        kind: 'pinch',
+        d0: Math.max(Math.abs(a - b), 1),
+        mid: timeAtClient((a + b) / 2),
+        start: scales.xMin,
+        end: scales.xMax,
+      }
+    } else {
+      panRef.current = {
+        kind: 'pan',
+        x0: e.clientX,
+        start: scales.xMin,
+        end: scales.xMax,
+      }
+    }
+  }
+
+  const onWheel = (e: WheelEvent) => {
+    if (!scales) return
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/⌘ + scroll, or trackpad pinch: zoom around the pointer.
+      e.preventDefault()
+      const f = Math.min(2, Math.max(0.5, Math.exp(e.deltaY * 0.01)))
+      zoomAt(f, timeAtClient(e.clientX))
+      return
+    }
+    const dx = e.shiftKey ? e.deltaY : e.deltaX
+    if (win && Math.abs(dx) > Math.abs(e.shiftKey ? 0 : e.deltaY)) {
+      // Sideways swipe / Shift + scroll pans the plot, axes stay put.
+      e.preventDefault()
+      const rect = svgRef.current?.getBoundingClientRect()
+      const unit = rect ? (rect.width / svgRef.current!.viewBox.baseVal.width) : 1
+      panBy(((dx / unit) / PLOT_W) * (scales.xMax - scales.xMin))
+    }
+  }
+
+  useEffect(() => {
+    wheelRef.current = onWheel
+  })
+
+  const hasChart = data != null
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const h = (e: WheelEvent) => wheelRef.current?.(e)
+    svg.addEventListener('wheel', h, { passive: false })
+    return () => svg.removeEventListener('wheel', h)
+  }, [hasChart])
+
   const onPointerMove = (e: ReactPointerEvent) => {
-    if (scrubRef.current) {
-      cursorFromClient(e.clientX)
+    const pan = panRef.current
+    if (pan && pointersRef.current.has(e.pointerId) && scales) {
+      pointersRef.current.set(e.pointerId, e.clientX)
+      if (pan.kind === 'pinch') {
+        const pts = [...pointersRef.current.values()]
+        if (pts.length < 2) return
+        const d = Math.max(Math.abs(pts[0]! - pts[1]!), 1)
+        const f = pan.d0 / d
+        setWindow(
+          pan.mid - (pan.mid - pan.start) * f,
+          pan.mid + (pan.end - pan.mid) * f,
+        )
+      } else if (win) {
+        const dxSvg =
+          clientToSvg(e.clientX, 0).x - clientToSvg(pan.x0, 0).x
+        const dt = -(dxSvg / PLOT_W) * (pan.end - pan.start)
+        setWindow(pan.start + dt, pan.end + dt)
+      }
       return
     }
     const drag = dragRef.current
@@ -762,8 +910,9 @@ export default function App() {
     [commitStore, flashSaved],
   )
 
-  const onPointerUp = () => {
-    scrubRef.current = false
+  const onPointerUp = (e?: ReactPointerEvent) => {
+    if (e) pointersRef.current.delete(e.pointerId)
+    if (!pointersRef.current.size) panRef.current = null
     const wasDragging = !!dragRef.current
     dragRef.current = null
     setActiveLabel(null)
@@ -1006,17 +1155,33 @@ export default function App() {
   const endW = endLabels.reduce((m, l) => Math.max(m, l.text.length * 7.6), 0)
   const svgW = Math.max(W, Math.ceil(endX + endW + 16))
 
+  // Time ticks for the visible window: months, weeks or days.
   const months: { t: number; label: string }[] = []
   {
-    const start = new Date(data.dates[0] + 'T00:00:00')
-    const end = new Date(data.dates[data.dates.length - 1] + 'T00:00:00')
-    const cur = new Date(start.getFullYear(), start.getMonth(), 1)
-    while (cur <= end) {
-      months.push({
-        t: cur.getTime(),
-        label: cur.toLocaleString('en-US', { month: 'short', year: 'numeric' }),
-      })
-      cur.setMonth(cur.getMonth() + 1)
+    const spanDays = (scales.xMax - scales.xMin) / DAY_MS
+    const start = new Date(scales.xMin)
+    const end = new Date(scales.xMax)
+    if (spanDays > 120) {
+      const step = Math.max(1, Math.ceil(spanDays / 30 / 12))
+      const cur = new Date(start.getFullYear(), start.getMonth() + 1, 1)
+      while (cur <= end) {
+        months.push({
+          t: cur.getTime(),
+          label: cur.toLocaleString('en-US', { month: 'short', year: 'numeric' }),
+        })
+        cur.setMonth(cur.getMonth() + step)
+      }
+    } else {
+      const stepDays = spanDays > 45 ? 7 : spanDays > 16 ? 3 : 1
+      const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1)
+      if (stepDays === 7) cur.setDate(cur.getDate() + ((8 - cur.getDay()) % 7))
+      while (cur <= end) {
+        months.push({
+          t: cur.getTime(),
+          label: cur.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+        })
+        cur.setDate(cur.getDate() + stepDays)
+      }
     }
   }
 
@@ -1024,7 +1189,17 @@ export default function App() {
   {
     const span = yMax - yMin
     const step =
-      span > 2000 ? 500 : span > 800 ? 200 : span > 300 ? 100 : span > 120 ? 50 : 25
+      span > 2000
+        ? 500
+        : span > 800
+          ? 200
+          : span > 300
+            ? 100
+            : span > 120
+              ? 50
+              : span > 50
+                ? 25
+                : 10
     for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) yTicks.push(v)
   }
 
@@ -1207,15 +1382,21 @@ export default function App() {
             viewBox={`0 0 ${svgW} ${H}`}
             style={{
               fontFamily: '"IBM Plex Sans", "Segoe UI", Arial, sans-serif',
-              // Plot keeps its usual size; extra label room overflows → scroll.
-              width: `${(svgW / W) * 100}%`,
-              minWidth: `calc(var(--stage-min-w, 0px) * ${svgW / W})`,
+              // Whole chart fits the stage; zoom / pan happen inside the plot.
+              width: '100%',
             }}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerLeave={onPointerUp}
           >
             <rect x={0} y={0} width={svgW} height={H} fill={chartUi.bg} />
+            <defs>
+              {/* Time-dependent content is clipped to the plot's x-range, so
+                  zooming / panning never draws over the € axis. */}
+              <clipPath id="plot-clip">
+                <rect x={M.left} y={0} width={PLOT_W} height={H} />
+              </clipPath>
+            </defs>
             <text
               x={W / 2}
               y={26}
@@ -1250,6 +1431,7 @@ export default function App() {
                 )}
               </g>
             ))}
+            <g clipPath="url(#plot-clip)">
             {months.map((m) => (
               <g key={m.t}>
                 <line
@@ -1273,6 +1455,7 @@ export default function App() {
                 )}
               </g>
             ))}
+            </g>
 
             <line
               x1={M.left}
@@ -1284,19 +1467,17 @@ export default function App() {
               strokeDasharray="4 3"
             />
 
-            {/* Press / drag anywhere on the plot to move the time cursor. */}
+            <g clipPath="url(#plot-clip)">
+            {/* Drag to pan when zoomed, pinch / Ctrl+scroll / double-click to zoom. */}
             <rect
               x={M.left}
               y={M.top}
               width={PLOT_W}
               height={PLOT_H}
               fill="transparent"
-              style={{ cursor: 'ew-resize', touchAction: 'pan-y' }}
-              onPointerDown={(e) => {
-                ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                scrubRef.current = true
-                cursorFromClient(e.clientX)
-              }}
+              style={{ cursor: win ? 'grab' : 'zoom-in', touchAction: 'pan-y' }}
+              onPointerDown={onPlotPointerDown}
+              onDoubleClick={(e) => zoomAt(0.5, timeAtClient(e.clientX))}
             />
 
             {rewound &&
@@ -1323,8 +1504,10 @@ export default function App() {
                   sym === 'TOTAL' || sym === 'ALL_VOO' ? 2.4 : 1.8
                 }
                 strokeDasharray={sym === 'ALL_VOO' ? '7 4' : undefined}
+                style={{ pointerEvents: 'none' }}
               />
             ))}
+            </g>
 
             {legendRows.length > 0 && (
               <rect
@@ -1381,6 +1564,7 @@ export default function App() {
               </text>
             )}
 
+            <g clipPath="url(#plot-clip)">
             {buys.filter((b) => visible[b.sym] !== false && b.date <= cursorDate).map((b) => {
               const sym = b.sym
               // Series points are end-of-day closes; a buy happens during the
@@ -1535,6 +1719,7 @@ export default function App() {
 
             {(() => {
               const cx = xScale(parseDay(cursorDate))
+              if (cx < M.left - 1 || cx > M.left + PLOT_W + 1) return null
               const label = cursorDate
               const tw = label.length * 6.6 + 16
               const tx = Math.max(
@@ -1589,14 +1774,16 @@ export default function App() {
                 </g>
               )
             })()}
+            </g>
 
-            {endLabels.map(({ sym, val, text }) => {
+            {(!win || xScale(parseDay(data.dates[lastIdx]!)) <= M.left + PLOT_W) &&
+              endLabels.map(({ sym, val, text }) => {
                 const color = seriesColor(sym)
                 return (
                   <text
                     key={`end-${sym}`}
                     x={endX}
-                    y={yScale(val) + 4}
+                    y={Math.max(M.top + 8, Math.min(M.top + PLOT_H, yScale(val))) + 4}
                     fontSize={12}
                     fontWeight={700}
                     fill={color}
@@ -1637,6 +1824,65 @@ export default function App() {
               )}
 
           </svg>
+        </div>
+
+        <div className="zoombar">
+          <div
+            className="panbar"
+            hidden={!win}
+            onPointerDown={(e) => {
+              // Click on the track: jump the window there.
+              if (!scales || e.target !== e.currentTarget) return
+              const r = e.currentTarget.getBoundingClientRect()
+              const t =
+                scales.fullMin +
+                ((e.clientX - r.left) / r.width) * (scales.fullMax - scales.fullMin)
+              const half = (scales.xMax - scales.xMin) / 2
+              setWindow(t - half, t + half)
+            }}
+          >
+            {win && (
+              <div
+                className="panbar-thumb"
+                style={{
+                  left: `${((scales.xMin - scales.fullMin) / (scales.fullMax - scales.fullMin)) * 100}%`,
+                  width: `${((scales.xMax - scales.xMin) / (scales.fullMax - scales.fullMin)) * 100}%`,
+                }}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                  const track = e.currentTarget.parentElement!.getBoundingClientRect()
+                  const x0 = e.clientX
+                  const s0 = scales.xMin
+                  const e0 = scales.xMax
+                  const full = scales.fullMax - scales.fullMin
+                  const move = (ev: PointerEvent) => {
+                    const dt = ((ev.clientX - x0) / track.width) * full
+                    setWindow(s0 + dt, e0 + dt)
+                  }
+                  const el = e.currentTarget
+                  const up = () => {
+                    el.removeEventListener('pointermove', move)
+                    el.removeEventListener('pointerup', up)
+                    el.removeEventListener('pointercancel', up)
+                  }
+                  el.addEventListener('pointermove', move)
+                  el.addEventListener('pointerup', up)
+                  el.addEventListener('pointercancel', up)
+                }}
+              />
+            )}
+          </div>
+          <div className="zoom-buttons" role="group" aria-label="Zoom">
+            <button type="button" title="Zoom out" onClick={() => zoomAt(1.6)} disabled={!win}>
+              −
+            </button>
+            <button type="button" title="Zoom in" onClick={() => zoomAt(0.6)}>
+              +
+            </button>
+            <button type="button" title="Show everything" onClick={() => setWin(null)} disabled={!win}>
+              Fit
+            </button>
+          </div>
         </div>
 
         <div className="scrubber">
