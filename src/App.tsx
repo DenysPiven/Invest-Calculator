@@ -121,6 +121,15 @@ function parseDay(s: string) {
 
 const DAY_MS = 86400000
 
+/** Quick time-range presets (chart view only; numbers stay all-time). */
+const RANGES: { label: string; months: number | null }[] = [
+  { label: '1M', months: 1 },
+  { label: '3M', months: 3 },
+  { label: '6M', months: 6 },
+  { label: '1Y', months: 12 },
+  { label: 'All', months: null },
+]
+
 /** Short leader-line label layout with light collision avoidance. */
 function fallbackBuys(raw: ChartData['buys']): Buy[] {
   if (!raw.length) return []
@@ -1013,6 +1022,13 @@ export default function App() {
   const lastIdx = data.dates.length - 1
   const ci = cursor == null ? lastIdx : Math.max(0, Math.min(cursor, lastIdx))
   const rewound = ci < lastIdx
+  /** Start of a “last N months” range, ending at the latest data day. */
+  const rangeStart = (months: number | null) => {
+    if (months == null) return -Infinity
+    const d = new Date(parseDay(data.dates[lastIdx]!))
+    d.setMonth(d.getMonth() - months)
+    return d.getTime()
+  }
   const cursorDate = data.dates[ci]!
   /** Everything below the chart reflects the chart as of the cursor day. */
   const view = rewound ? truncateChart(data, ci) : data
@@ -1871,6 +1887,35 @@ export default function App() {
                 }}
               />
             )}
+          </div>
+          <div className="range-buttons" role="group" aria-label="Time range">
+            {RANGES.map((r) => {
+              const start = rangeStart(r.months)
+              // Small right margin so the latest point isn't glued to the edge.
+              const lastT = parseDay(data.dates[lastIdx]!)
+              const end = Math.min(scales.fullMax, lastT + (lastT - start) * 0.05)
+              const active =
+                r.months == null
+                  ? !win
+                  : start > scales.fullMin &&
+                    !!win &&
+                    Math.abs(win.start - start) < DAY_MS &&
+                    Math.abs(win.end - end) < DAY_MS
+              return (
+                <button
+                  key={r.label}
+                  type="button"
+                  className={active ? 'on' : undefined}
+                  aria-pressed={active}
+                  onClick={() => {
+                    if (r.months == null || start <= scales.fullMin) setWin(null)
+                    else setWin({ start, end })
+                  }}
+                >
+                  {r.label}
+                </button>
+              )
+            })}
           </div>
           <div className="zoom-buttons" role="group" aria-label="Zoom">
             <button type="button" title="Zoom out" onClick={() => zoomAt(1.6)} disabled={!win}>

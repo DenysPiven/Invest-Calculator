@@ -760,3 +760,29 @@ button:disabled {
 .zoom-buttons button {
   min-width: 36px;
 }
+
+.range-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.range-buttons button {
+  min-width: 40px;
+}
+
+.range-buttons button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+@media (max-width: 640px) {
+  .zoombar {
+    flex-wrap: wrap;
+  }
+
+  .panbar {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
